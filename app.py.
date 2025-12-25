@@ -1,0 +1,5 @@
+Buat koneksi aman ke Supabase menggunakan os.environ.
+Buat Sidebar untuk filter data berdasarkan tanggal, kategory_produk.
+Tampilkan 3 KPI Utama di bagian atas: Total [total_penjualan], Total [total_unit_terjual], [rasio_return].
+Buat Grafik Tren Bulanan (Bar Chart) yang menampilkan [order_date] berdasarkan waktu.
+Buat Pie Chart untuk melihat komposisi berdasarkan [kategory_produk].
