@@ -5,143 +5,124 @@ import plotly.express as px
 from supabase import create_client, Client
 from datetime import datetime
 
-# 1. Konfigurasi Halaman & Koneksi Aman
-st.set_page_config(page_title="Dashboard Analisis Penjualan", layout="wide")
+# --- 1. KONFIGURASI HALAMAN ---
+st.set_page_config(
+    page_title="Dashboard Analisis Refund",
+    page_icon="📊",
+    layout="wide"
+)
 
+# --- 2. KONEKSI DATABASE (SECURE) ---
 @st.cache_resource
 def init_connection():
-    try:
-        url = os.environ.get("SUPABASE_URL")
-        key = os.environ.get("SUPABASE_KEY")
-        if not url or not key:
-            st.error("Environment variables SUPABASE_URL dan SUPABASE_KEY tidak ditemukan!")
-            st.stop()
-        return create_client(url, key)
-    except Exception as e:
-        st.error(f"Gagal menghubungkan ke Supabase: {e}")
-        return None
+    """Inisialisasi koneksi ke Supabase menggunakan Environment Variables."""
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+    
+    if not url or not key:
+        st.error("Kredensial database tidak ditemukan! Pastikan SUPABASE_URL dan SUPABASE_KEY sudah diatur.")
+        st.stop()
+        
+    return create_client(url, key)
 
-supabase = init_connection()
+supabase: Client = init_connection()
 
-# 2. Fungsi Load Data
-@st.cache_data(ttl=600)  # Cache data selama 10 menit
-def load_data():
+# --- 3. DATA FETCHING & PROCESSING ---
+@st.cache_data(ttl=600)  # Data disimpan di cache selama 10 menit
+def fetch_data():
+    """Mengambil semua data dari tabel dan melakukan preprocessing."""
     try:
         # Mengambil data dari tabel [datapenjualanbaru]
-        # Catatan: Kita ambil kolom yang diperlukan saja untuk efisiensi
-        query = supabase.table("datapenjualanbaru").select("*").execute()
-        df = pd.DataFrame(query.data)
+        # Catatan: Supabase secara default membatasi 1000 baris. 
+        # Untuk data sangat besar, diperlukan logic pagination.
+        response = supabase.table("datapenjualanbaru").select("*").execute()
+        df = pd.DataFrame(response.data)
         
         if df.empty:
             return df
 
-        # Pra-pemrosesan Data
-        df['order_date'] = pd.to_datetime(df['order_date'])
-        # Pastikan kolom numerik benar-benar float/int
-        numeric_cols = ['order_amount', 'total_refund', 'original_price']
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        # Konversi format tanggal [cancel_time] menjadi datetime
+        df['cancel_time'] = pd.to_datetime(df['cancel_time'], errors='coerce')
+        
+        # Pastikan kolom [total_refund] adalah numerik
+        df['total_refund'] = pd.to_numeric(df['total_refund'], errors='coerce').fillna(0)
+        
+        # Hapus baris yang tidak memiliki tanggal pembatalan (opsional, tergantung kebutuhan)
+        df = df.dropna(subset=['cancel_time'])
         
         return df
     except Exception as e:
-        st.error(f"Error saat mengambil data: {e}")
+        st.error(f"Gagal mengambil data: {str(e)}")
         return pd.DataFrame()
 
-# --- MAIN APP ---
+# --- 4. LOGIKA UTAMA APP ---
 def main():
-    st.title("📊 Dashboard Analisis Penjualan & Return")
-    
-    df_raw = load_data()
-    
-    if df_raw.empty:
-        st.warning("Data tidak tersedia atau tabel kosong.")
+    st.title("🚀 Real-time Sales & Refund Dashboard")
+    st.markdown("Data bersumber langsung dari tabel `datapenjualanbaru` di Supabase.")
+
+    # Load Data
+    df = fetch_data()
+
+    if df.empty:
+        st.warning("Tidak ada data yang tersedia untuk ditampilkan.")
         return
 
-    # 3. Sidebar Filter
-    st.sidebar.header("Filter Data")
-    
-    # Filter Tanggal
-    min_date = df_raw['order_date'].min().date()
-    max_date = df_raw['order_date'].max().date()
-    
-    start_date, end_date = st.sidebar.date_input(
-        "Rentang Waktu",
-        value=[min_date, max_date],
-        min_value=min_date,
-        max_value=max_date
-    )
+    # --- 5. LOGIKA KPI ---
+    total_refund_value = df['total_refund'].sum()
+    total_records = len(df)
 
-    # Filter Kategori Produk
-    categories = ["Semua"] + sorted(df_raw['product_category'].unique().tolist())
-    selected_category = st.sidebar.selectbox("Kategori Produk", categories)
-
-    # Apply Filter
-    mask = (df_raw['order_date'].dt.date >= start_date) & (df_raw['order_date'].dt.date <= end_date)
-    if selected_category != "Semua":
-        mask = mask & (df_raw['product_category'] == selected_category)
-    
-    df = df_raw.loc[mask].copy()
-
-    # 4. Perhitungan KPI
-    try:
-        total_penjualan = df['order_amount'].sum()
-        total_unit = len(df) # Atau sum dari kolom kuantitas jika ada
-        
-        # Logika Return: Dianggap return jika total_refund > 0 atau ada cancel_reason
-        df_return = df[df['total_refund'] > 0]
-        rasio_return = (len(df_return) / len(df) * 100) if len(df) > 0 else 0
-        
-        produk_return_count = df_return['product_name'].nunique()
-        alasan_populer = df_return['cancel_reason'].mode()[0] if not df_return.empty else "N/A"
-        total_kota_return = df_return['regency_city'].nunique()
-
-        # Tampilkan KPI (6 Kolom)
-        col1, col2, col3, col4, col5, col6 = st.columns(6)
-        
-        col1.metric("Total Penjualan", f"Rp {total_penjualan:,.0f}")
-        col2.metric("Total Unit", f"{total_unit:,}")
-        col3.metric("Rasio Return", f"{rasio_return:.1f}%")
-        col4.metric("Produk Return", f"{produk_return_count}")
-        col5.metric("Alasan Terbanyak", f"{alasan_populer}")
-        col6.metric("Kota Return", f"{total_kota_return}")
-
-    except Exception as e:
-        st.error(f"Kesalahan dalam perhitungan KPI: {e}")
-
-    st.markdown("---")
-
-    # 5. Visualisasi
-    col_left, col_right = st.columns(2)
-
-    with col_left:
-        # Grafik Tren Bulanan (Bar Chart)
-        st.subheader("📈 Tren Penjualan Bulanan")
-        df_trend = df.set_index('order_date').resample('M')['order_amount'].sum().reset_index()
-        fig_trend = px.bar(
-            df_trend, 
-            x='order_date', 
-            y='order_amount',
-            labels={'order_amount': 'Total Penjualan', 'order_date': 'Bulan'},
-            color_discrete_sequence=['#3366CC']
+    # Menampilkan KPI di bagian atas
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric(
+            label="Total Refund", 
+            value=f"Rp {total_refund_value:,.0f}".replace(",", "."),
+            delta="Nilai Kumulatif"
         )
-        st.plotly_chart(fig_trend, use_container_width=True)
-
-    with col_right:
-        # Pie Chart Kategori Produk
-        st.subheader("🍕 Komposisi Kategori Produk")
-        df_pie = df.groupby('product_category')['order_amount'].sum().reset_index()
-        fig_pie = px.pie(
-            df_pie, 
-            values='order_amount', 
-            names='product_category',
-            hole=0.4,
-            color_discrete_sequence=px.colors.qualitative.Pastel
+    with col2:
+        st.metric(
+            label="Jumlah Data (Transaksi)", 
+            value=f"{total_records:,}".replace(",", "."),
+            delta="Total Baris"
         )
-        st.plotly_chart(fig_pie, use_container_width=True)
 
-    # Data Table Preview (Optional)
-    if st.checkbox("Lihat Detail Data Terfilter"):
+    st.divider()
+
+    # --- 6. GRAFIK TREN BULANAN ---
+    st.subheader("📈 Tren Refund Bulanan")
+
+    # Persiapan data untuk grafik
+    # Kita buat kolom Periode (Tahun-Bulan) untuk grouping
+    df['periode'] = df['cancel_time'].dt.strftime('%Y-%m')
+    
+    df_monthly = df.groupby('periode')['total_refund'].sum().reset_index()
+    df_monthly = df_monthly.sort_values('periode') # Pastikan urutan kronologis
+
+    # Membuat Bar Chart dengan Plotly
+    if not df_monthly.empty:
+        fig = px.bar(
+            df_monthly,
+            x='periode',
+            y='total_refund',
+            title="Total Refund per Bulan",
+            labels={'total_refund': 'Nilai Refund (Rp)', 'periode': 'Bulan Pembatalan'},
+            text_auto='.2s', # Menampilkan angka ringkas di atas bar
+            color_discrete_sequence=['#FF4B4B'] # Warna identik dengan 'cancel/refund'
+        )
+
+        fig.update_layout(
+            xaxis_type='category',
+            hovermode="x unified",
+            plot_bgcolor="rgba(0,0,0,0)",
+            xaxis_tickangle=-45
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Data tidak cukup untuk membuat grafik tren.")
+
+    # --- 7. DATA PREVIEW (DEBUGGING/OPSIONAL) ---
+    with st.expander("Lihat Detail Data Mentah"):
         st.dataframe(df.head(100), use_container_width=True)
 
 if __name__ == "__main__":
