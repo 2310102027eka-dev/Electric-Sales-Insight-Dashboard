@@ -2,301 +2,157 @@ import os
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import google.generativeai as genai
 from supabase import create_client, Client
 from datetime import datetime
 
-# --- 1. KONFIGURASI HALAMAN ---
-st.set_page_config(
-    page_title="Dashboard Analisis Refund",
-    page_icon="📊",
-    layout="wide"
-)
+# --- 1. SETUP KONFIGURASI & API ---
+st.set_page_config(page_title="Dashboard Final Penjualan & AI Insights", layout="wide")
 
-# --- 2. KONEKSI DATABASE (SECURE) ---
+# Setup Gemini AI
+# Menggunakan API Key yang Anda berikan via environment variable
+GEMINI_API_KEY = os.environ.get('AIzaSyAPFFdem2Wn9A6GePvqnEcFr5eLbZIq0-Q')
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-pro')
+
+# Setup Supabase
 @st.cache_resource
-def init_connection():
-    """Inisialisasi koneksi ke Supabase menggunakan Environment Variables."""
+def init_supabase():
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
-    
-    if not url or not key:
-        st.error("Kredensial database tidak ditemukan! Pastikan SUPABASE_URL dan SUPABASE_KEY sudah diatur.")
-        st.stop()
-        
     return create_client(url, key)
 
-supabase: Client = init_connection()
-
-# --- 3. DATA FETCHING & PROCESSING ---
-@st.cache_data(ttl=600)  # Data disimpan di cache selama 10 menit
-def fetch_data():
-    """Mengambil semua data dari tabel dan melakukan preprocessing."""
-    try:
-        # Mengambil data dari tabel [datapenjualanbaru]
-        # Catatan: Supabase secara default membatasi 1000 baris. 
-        # Untuk data sangat besar, diperlukan logic pagination.
-        response = supabase.table("datapenjualanbaru").select("*").execute()
-        df = pd.DataFrame(response.data)
-        
-        if df.empty:
-            return df
-
-        # Konversi format tanggal [cancel_time] menjadi datetime
-        df['cancel_time'] = pd.to_datetime(df['cancel_time'], errors='coerce')
-        
-        # Pastikan kolom [total_refund] adalah numerik
-        df['total_refund'] = pd.to_numeric(df['total_refund'], errors='coerce').fillna(0)
-        
-        # Hapus baris yang tidak memiliki tanggal pembatalan (opsional, tergantung kebutuhan)
-        df = df.dropna(subset=['cancel_time'])
-        
-        return df
-    except Exception as e:
-        st.error(f"Gagal mengambil data: {str(e)}")
-        return pd.DataFrame()
-
-# --- 4. LOGIKA UTAMA APP ---
-def main():
-    st.title("🚀 Real-time Sales & Refund Dashboard")
-    st.markdown("Data bersumber langsung dari tabel `datapenjualanbaru` di Supabase.")
-
-    # Load Data
-    df = fetch_data()
-
-    if df.empty:
-        st.warning("Tidak ada data yang tersedia untuk ditampilkan.")
-        return
-
-    # --- 5. LOGIKA KPI ---
-    total_refund_value = df['total_refund'].sum()
-    total_records = len(df)
-
-    # Menampilkan KPI di bagian atas
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric(
-            label="Total Refund", 
-            value=f"Rp {total_refund_value:,.0f}".replace(",", "."),
-            delta="Nilai Kumulatif"
-        )
-    with col2:
-        st.metric(
-            label="Jumlah Data (Transaksi)", 
-            value=f"{total_records:,}".replace(",", "."),
-            delta="Total Baris"
-        )
-
-    st.divider()
-
-    # --- 6. GRAFIK TREN BULANAN ---
-    st.subheader("📈 Tren Refund Bulanan")
-
-    # Persiapan data untuk grafik
-    # Kita buat kolom Periode (Tahun-Bulan) untuk grouping
-    df['periode'] = df['cancel_time'].dt.strftime('%Y-%m')
-    
-    df_monthly = df.groupby('periode')['total_refund'].sum().reset_index()
-    df_monthly = df_monthly.sort_values('periode') # Pastikan urutan kronologis
-
-    # Membuat Bar Chart dengan Plotly
-    if not df_monthly.empty:
-        fig = px.bar(
-            df_monthly,
-            x='periode',
-            y='total_refund',
-            title="Total Refund per Bulan",
-            labels={'total_refund': 'Nilai Refund (Rp)', 'periode': 'Bulan Pembatalan'},
-            text_auto='.2s', # Menampilkan angka ringkas di atas bar
-            color_discrete_sequence=['#FF4B4B'] # Warna identik dengan 'cancel/refund'
-        )
-
-        fig.update_layout(
-            xaxis_type='category',
-            hovermode="x unified",
-            plot_bgcolor="rgba(0,0,0,0)",
-            xaxis_tickangle=-45
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Data tidak cukup untuk membuat grafik tren.")
-
-    # --- 7. DATA PREVIEW (DEBUGGING/OPSIONAL) ---
-    with st.expander("Lihat Detail Data Mentah"):
-        st.dataframe(df.head(100), use_container_width=True)
-
-if __name__ == "__main__":
-    main()
-import os
-import pandas as pd
-import streamlit as st
-import plotly.express as px
-from supabase import create_client, Client
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-
-# --- 1. CONFIG & CONNECTION ---
-st.set_page_config(page_title="Product Return Clustering", layout="wide")
-
-@st.cache_resource
-def init_connection():
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
-    if not url or not key:
-        st.error("Kredensial Supabase tidak ditemukan!")
-        st.stop()
-    return create_client(url, key)
-
-supabase = init_connection()
+supabase = init_supabase()
 
 # --- 2. DATA FETCHING ---
 @st.cache_data(ttl=600)
-def load_raw_data():
+def load_data():
     try:
-        # Mengambil semua data dari tabel [datapenjualanbaru]
-        response = supabase.table("datapenjualanbaru").select("*").execute()
-        df = pd.DataFrame(response.data)
+        # Mengambil data dari tabel [datapenjualanbaru]
+        res = supabase.table("datapenjualanbaru").select("*").execute()
+        df = pd.DataFrame(res.data)
+        
+        # Konversi kolom tanggal (Asumsi ada kolom order_date atau gunakan cancel_time)
+        # Kita gunakan cancel_time sesuai instruksi spesifik Anda
+        if 'cancel_time' in df.columns:
+            df['cancel_time'] = pd.to_datetime(df['cancel_time'], errors='coerce')
+        
+        # Pastikan kolom numerik
+        cols_to_fix = ['order_amount', 'total_refund', 'original_price', 'total_discount']
+        for col in cols_to_fix:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        
         return df
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
+        st.error(f"Gagal memuat data: {e}")
         return pd.DataFrame()
 
-# --- 3. PRE-PROCESSING & AGGREGATION ---
-def preprocess_for_clustering(df):
-    if df.empty:
-        return pd.DataFrame()
+# --- 3. SIDEBAR (FILTER DATA) ---
+df_raw = load_data()
 
-    # Konversi kolom numerik
-    numeric_cols = ['original_price', 'total_discount', 'order_amount']
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+st.sidebar.header("🔍 Filter Data")
 
-    # Logika Return: Dianggap return jika cancel_reason atau return_type tidak kosong
-    # Pastikan kolom ada, jika tidak buat default False
-    col_reason = 'cancel_reason' if 'cancel_reason' in df.columns else None
-    col_type = 'return_type' if 'return_type' in df.columns else None
+if not df_raw.empty:
+    # Filter Tanggal
+    min_date = df_raw['cancel_time'].min().date() if not df_raw['cancel_time'].isnull().all() else datetime.now().date()
+    max_date = df_raw['cancel_time'].max().date() if not df_raw['cancel_time'].isnull().all() else datetime.now().date()
     
-    df['is_return'] = False
-    if col_reason and col_type:
-        df['is_return'] = df[col_reason].notna() | (df[col_type].astype(str).str.strip() != "")
+    date_range = st.sidebar.date_input("Rentang Waktu", [min_date, max_date])
+
+    # Dynamic Multiselect Filters
+    # Saya kelompokkan kolom-kolom penting agar sidebar tidak terlalu panjang namun tetap mencakup permintaan Anda
+    st.sidebar.subheader("Filter Spesifik")
     
-    # Agregasi PER PRODUK
-    # Kita asumsikan 'product_name' sebagai unique identifier
-    agg_df = df.groupby('product_name').agg(
-        total_transaksi=('order_id', 'count'),
-        total_return=('is_return', 'sum'),
-        avg_price=('original_price', 'mean'),
-        total_discount=('total_discount', 'sum')
-    ).reset_index()
+    selected_category = st.sidebar.multiselect("Kategori Produk", df_raw['product_category'].unique())
+    selected_city = st.sidebar.multiselect("Kota (Regency/City)", df_raw['regency_city'].unique())
+    selected_platform_sku = st.sidebar.multiselect("Platform SKU", df_raw['platform_sku_variation'].unique())
+    selected_cancel_reason = st.sidebar.multiselect("Alasan Cancel", df_raw['cancel_reason'].unique().tolist())
 
-    # Hitung return_rate
-    agg_df['return_rate'] = agg_df['total_return'] / agg_df['total_transaksi']
+    # --- LOGIKA FILTERING ---
+    df_filtered = df_raw.copy()
     
-    # Tangani missing value hasil agregasi (jika ada)
-    agg_df = agg_df.dropna()
+    # Filter by Date
+    if len(date_range) == 2:
+        df_filtered = df_filtered[(df_filtered['cancel_time'].dt.date >= date_range[0]) & 
+                                  (df_filtered['cancel_time'].dt.date <= date_range[1])]
     
-    return agg_df
+    # Filter by Multiselects
+    if selected_category:
+        df_filtered = df_filtered[df_filtered['product_category'].isin(selected_category)]
+    if selected_city:
+        df_filtered = df_filtered[df_filtered['regency_city'].isin(selected_city)]
+    if selected_platform_sku:
+        df_filtered = df_filtered[df_filtered['platform_sku_variation'].isin(selected_platform_sku)]
+    if selected_cancel_reason:
+        df_filtered = df_filtered[df_filtered['cancel_reason'].isin(selected_cancel_reason)]
 
-# --- 4. CLUSTERING LOGIC ---
-def perform_clustering(df_agg):
-    # Fitur untuk clustering
-    features = ['return_rate', 'total_transaksi', 'avg_price', 'total_discount']
-    X = df_agg[features]
+# --- 4. MAIN DASHBOARD ---
+st.title("📊 Sales & Return Final Dashboard")
 
-    # Standarisasi Fitur
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+if df_raw.empty:
+    st.warning("Data tidak ditemukan di database.")
+else:
+    # Metric Cards
+    m1, m2, m3 = st.columns(3)
+    total_sales = df_filtered['order_amount'].sum()
+    total_refund = df_filtered['total_refund'].sum()
+    total_orders = len(df_filtered)
 
-    # KMeans Modelling
-    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
-    df_agg['cluster'] = kmeans.fit_predict(X_scaled)
+    m1.metric("Total Omset (Filtered)", f"Rp {total_sales:,.0f}")
+    m2.metric("Total Refund (Filtered)", f"Rp {total_refund:,.0f}")
+    m3.metric("Jumlah Transaksi", f"{total_orders:,}")
+
+    st.markdown("---")
+
+    # Visualisasi
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.subheader("📈 Tren Penjualan/Pembatalan")
+        df_trend = df_filtered.set_index('cancel_time').resample('M')['order_amount'].sum().reset_index()
+        fig_bar = px.bar(df_trend, x='cancel_time', y='order_amount', 
+                         title="Tren Bulanan", color_discrete_sequence=['#00CC96'])
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    with c2:
+        st.subheader("🍰 Komposisi Kategori Produk")
+        fig_pie = px.pie(df_filtered, names='product_category', values='order_amount', 
+                         title="Proporsi Per Kategori", hole=0.4)
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    st.markdown("---")
+
+    # --- 5. AI INSIGHTS (GEN AI) ---
+    st.subheader("🤖 AI Business Advisor")
     
-    # Memberikan label nama cluster yang lebih bermakna secara otomatis
-    # (Opsional: Mengurutkan cluster berdasarkan return rate)
-    return df_agg, features
+    if st.button("Minta Saran AI"):
+        with st.spinner("Sedang menganalisis data Anda..."):
+            # Ringkasan data untuk dikirim ke AI
+            top_category = df_filtered.groupby('product_category')['order_amount'].sum().idxmax() if not df_filtered.empty else "N/A"
+            most_cancel_reason = df_filtered['cancel_reason'].mode()[0] if not df_filtered.empty and not df_filtered['cancel_reason'].mode().empty else "N/A"
+            
+            prompt = f"""
+            Anda adalah konsultan bisnis senior. Analisis data penjualan berikut:
+            - Total Omset saat ini: Rp {total_sales:,.0f}
+            - Total Refund/Kembali: Rp {total_refund:,.0f}
+            - Jumlah Transaksi: {total_orders}
+            - Kategori Terlaris: {top_category}
+            - Alasan Pembatalan Terbanyak: {most_cancel_reason}
+            
+            Berikan laporan singkat yang mencakup:
+            1. Analisis Tren (Apakah kondisi bisnis sehat?)
+            2. Penyebab Kemungkinan (Mengapa refund/pembatalan terjadi?)
+            3. Saran Strategi Syariah (Bagaimana mengelola transaksi, retur, dan komplain pelanggan sesuai prinsip kejujuran, keadilan, dan keridhaan dalam Islam?)
+            """
+            
+            try:
+                response = model.generate_content(prompt)
+                st.markdown("### 💡 Hasil Analisis AI")
+                st.write(response.text)
+            except Exception as e:
+                st.error(f"Gagal menghubungi AI: {e}")
 
-# --- MAIN APP ---
-def main():
-    st.title("🧪 Product Analytics: Return Clustering")
-    st.markdown("Analisis Data Mining untuk mengidentifikasi produk yang menghambat rating toko.")
-
-    # 1. Load Data
-    df_raw = load_raw_data()
-    
-    if df_raw.empty:
-        st.warning("Data tidak ditemukan.")
-        return
-
-    # 2. Pre-processing
-    with st.spinner("Memproses data produk..."):
-        df_agg = preprocess_for_clustering(df_raw)
-
-    if len(df_agg) < 3:
-        st.error("Jumlah produk unik terlalu sedikit untuk melakukan clustering (minimal 3 produk).")
-        return
-
-    # 3. Clustering
-    df_clustered, features = perform_clustering(df_agg)
-
-    # 4. Visualisasi Scatter Plot
-    st.subheader("📍 Segmentasi Produk Berdasarkan Tingkat Return")
-    fig = px.scatter(
-        df_clustered,
-        x="total_transaksi",
-        y="return_rate",
-        color="cluster",
-        hover_name="product_name",
-        size="avg_price",
-        color_continuous_scale="Viridis",
-        labels={"return_rate": "Tingkat Return", "total_transaksi": "Total Transaksi"},
-        template="plotly_white"
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    # 5. Interpretasi Hasil (Tabel Ringkasan)
-    st.subheader("📊 Profiling Cluster")
-    summary_table = df_clustered.groupby('cluster')[features].mean().reset_index()
-    
-    # Mempercantik tampilan tabel
-    st.dataframe(
-        summary_table.style.highlight_max(axis=0, subset=['return_rate'], color='#ffcccc')
-                           .highlight_min(axis=0, subset=['return_rate'], color='#ccffcc')
-                           .format({
-                               'return_rate': '{:.2%}',
-                               'total_transaksi': '{:.1f}',
-                               'avg_price': 'Rp{:,.0f}',
-                               'total_discount': 'Rp{:,.0f}'
-                           }),
-        use_container_width=True
-    )
-
-    # 6. Insight Bisnis Otomatis
-    st.subheader("💡 Insight Bisnis & Rekomendasi")
-    
-    # Mencari cluster dengan return rate tertinggi
-    idx_high_return = summary_table['return_rate'].idxmax()
-    idx_low_return_high_sales = summary_table.loc[
-        (summary_table['return_rate'] < summary_table['return_rate'].mean())
-    ]['total_transaksi'].idxmax()
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.error(f"**Cluster {idx_high_return}: Prioritas Perbaikan**")
-        st.write("Produk di cluster ini memiliki **tingkat return tertinggi**. Segera cek kualitas bahan, deskripsi produk, atau masalah logistik untuk mencegah penurunan rating.")
-
-    with col2:
-        st.success(f"**Cluster {idx_low_return_high_sales}: Produk Unggulan**")
-        st.write("Produk dengan **transaksi tinggi dan return rendah**. Sangat potensial untuk dipromosikan lebih lanjut guna menaikkan reputasi toko.")
-
-    with col3:
-        st.info("**Cluster Lain: Evaluasi Lanjutan**")
-        st.write("Produk dengan volume transaksi rendah. Perlu evaluasi apakah kurang peminat atau perlu penyesuaian harga (Average Price).")
-
-    # Data Detail
-    with st.expander("Lihat Data Produk Per Cluster"):
-        st.dataframe(df_clustered.sort_values(by='cluster'), use_container_width=True)
-
-if __name__ == "__main__":
-    main()
+    # Preview Data
+    with st.expander("Lihat Data Terfilter (Raw)"):
+        st.dataframe(df_filtered)
