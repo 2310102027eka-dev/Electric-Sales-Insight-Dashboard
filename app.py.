@@ -1,147 +1,148 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { generateMockData } from './mockData';
-import { SaleRecord, DashboardStats, FilterState } from './types';
-import Sidebar from './components/Sidebar';
-import KpiCards from './components/KpiCards';
-import Charts from './components/Charts';
-import { getSalesInsights } from './services/geminiService';
+import os
+import pandas as pd
+import streamlit as st
+import plotly.express as px
+from supabase import create_client, Client
+from datetime import datetime
 
-const App: React.FC = () => {
-  const [rawData] = useState<SaleRecord[]>(() => generateMockData());
-  const [filters, setFilters] = useState<FilterState>({
-    startDate: '',
-    endDate: '',
-    category: 'All'
-  });
-  const [aiInsight, setAiInsight] = useState<string>('');
-  const [isInsightLoading, setIsInsightLoading] = useState(false);
+# 1. Konfigurasi Halaman & Koneksi Aman
+st.set_page_config(page_title="Dashboard Analisis Penjualan", layout="wide")
 
-  const filteredData = useMemo(() => {
-    return rawData.filter(item => {
-      const dateMatch = (!filters.startDate || item.order_date >= filters.startDate) &&
-                        (!filters.endDate || item.order_date <= filters.endDate);
-      const categoryMatch = filters.category === 'All' || item.product_category === filters.category;
-      return dateMatch && categoryMatch;
-    });
-  }, [rawData, filters]);
+@st.cache_resource
+def init_connection():
+    try:
+        url = os.environ.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_KEY")
+        if not url or not key:
+            st.error("Environment variables SUPABASE_URL dan SUPABASE_KEY tidak ditemukan!")
+            st.stop()
+        return create_client(url, key)
+    except Exception as e:
+        st.error(f"Gagal menghubungkan ke Supabase: {e}")
+        return None
 
-  const stats: DashboardStats = useMemo(() => {
-    const totalSales = filteredData.reduce((acc, curr) => acc + curr.order_amount, 0);
-    const totalUnits = filteredData.reduce((acc, curr) => acc + curr.quantity, 0);
-    const returns = filteredData.filter(item => item.return_type !== null).length;
-    const returnRatio = filteredData.length > 0 ? returns / filteredData.length : 0;
-    const totalRecords = rawData.length;
+supabase = init_connection()
 
-    const categoryMap: Record<string, number> = {};
-    const trendMap: Record<string, number> = {};
+# 2. Fungsi Load Data
+@st.cache_data(ttl=600)  # Cache data selama 10 menit
+def load_data():
+    try:
+        # Mengambil data dari tabel [datapenjualanbaru]
+        # Catatan: Kita ambil kolom yang diperlukan saja untuk efisiensi
+        query = supabase.table("datapenjualanbaru").select("*").execute()
+        df = pd.DataFrame(query.data)
+        
+        if df.empty:
+            return df
 
-    filteredData.forEach(item => {
-      categoryMap[item.product_category] = (categoryMap[item.product_category] || 0) + item.order_amount;
-      const date = new Date(item.order_date);
-      const key = `${date.toLocaleString('default', { month: 'short' })} ${date.getFullYear()}`;
-      trendMap[key] = (trendMap[key] || 0) + item.order_amount;
-    });
+        # Pra-pemrosesan Data
+        df['order_date'] = pd.to_datetime(df['order_date'])
+        # Pastikan kolom numerik benar-benar float/int
+        numeric_cols = ['order_amount', 'total_refund', 'original_price']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        
+        return df
+    except Exception as e:
+        st.error(f"Error saat mengambil data: {e}")
+        return pd.DataFrame()
 
-    return {
-      totalSales,
-      totalUnits,
-      returnRatio,
-      totalRecords,
-      categoryData: Object.entries(categoryMap).map(([name, value]) => ({ name, value })),
-      trendData: Object.entries(trendMap).map(([date, amount]) => ({ date, amount }))
-    };
-  }, [filteredData, rawData]);
+# --- MAIN APP ---
+def main():
+    st.title("📊 Dashboard Analisis Penjualan & Return")
+    
+    df_raw = load_data()
+    
+    if df_raw.empty:
+        st.warning("Data tidak tersedia atau tabel kosong.")
+        return
 
-  useEffect(() => {
-    const fetchInsights = async () => {
-      if (filteredData.length === 0) {
-        setAiInsight("No data available for the selected filters.");
-        return;
-      }
-      setIsInsightLoading(true);
-      const insight = await getSalesInsights(stats);
-      setAiInsight(insight);
-      setIsInsightLoading(false);
-    };
+    # 3. Sidebar Filter
+    st.sidebar.header("Filter Data")
+    
+    # Filter Tanggal
+    min_date = df_raw['order_date'].min().date()
+    max_date = df_raw['order_date'].max().date()
+    
+    start_date, end_date = st.sidebar.date_input(
+        "Rentang Waktu",
+        value=[min_date, max_date],
+        min_value=min_date,
+        max_value=max_date
+    )
 
-    const timeout = setTimeout(fetchInsights, 1000); // Debounce AI calls
-    return () => clearTimeout(timeout);
-  }, [stats]);
+    # Filter Kategori Produk
+    categories = ["Semua"] + sorted(df_raw['product_category'].unique().tolist())
+    selected_category = st.sidebar.selectbox("Kategori Produk", categories)
 
-  return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900">
-      <Sidebar 
-        filters={filters} 
-        setFilters={setFilters} 
-        categories={Array.from(new Set(rawData.map(d => d.product_category)))}
-      />
-      
-      <main className="flex-1 p-4 md:p-8 lg:p-10 overflow-y-auto">
-        <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">Sales Intelligence</h1>
-            <p className="text-slate-500 mt-1">Advanced monitoring for [datapenjualanbaru] database.</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-sm font-semibold text-slate-600">Connected to Database</span>
-          </div>
-        </header>
+    # Apply Filter
+    mask = (df_raw['order_date'].dt.date >= start_date) & (df_raw['order_date'].dt.date <= end_date)
+    if selected_category != "Semua":
+        mask = mask & (df_raw['product_category'] == selected_category)
+    
+    df = df_raw.loc[mask].copy()
 
-        <KpiCards stats={stats} />
+    # 4. Perhitungan KPI
+    try:
+        total_penjualan = df['order_amount'].sum()
+        total_unit = len(df) # Atau sum dari kolom kuantitas jika ada
+        
+        # Logika Return: Dianggap return jika total_refund > 0 atau ada cancel_reason
+        df_return = df[df['total_refund'] > 0]
+        rasio_return = (len(df_return) / len(df) * 100) if len(df) > 0 else 0
+        
+        produk_return_count = df_return['product_name'].nunique()
+        alasan_populer = df_return['cancel_reason'].mode()[0] if not df_return.empty else "N/A"
+        total_kota_return = df_return['regency_city'].nunique()
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-          <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-bold text-slate-800">Monthly Revenue Trend</h2>
-              <span className="text-xs text-slate-400 font-medium">Auto-updated</span>
-            </div>
-            <Charts.TrendChart data={stats.trendData} />
-          </div>
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-            <h2 className="text-lg font-bold text-slate-800 mb-6">Category Performance</h2>
-            <Charts.CategoryPieChart data={stats.categoryData} />
-          </div>
-        </div>
+        # Tampilkan KPI (6 Kolom)
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
+        
+        col1.metric("Total Penjualan", f"Rp {total_penjualan:,.0f}")
+        col2.metric("Total Unit", f"{total_unit:,}")
+        col3.metric("Rasio Return", f"{rasio_return:.1f}%")
+        col4.metric("Produk Return", f"{produk_return_count}")
+        col5.metric("Alasan Terbanyak", f"{alasan_populer}")
+        col6.metric("Kota Return", f"{total_kota_return}")
 
-        <section className="relative overflow-hidden bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
-          <div className="absolute top-0 right-0 p-4 opacity-10">
-            <svg className="w-24 h-24 text-indigo-600" fill="currentColor" viewBox="0 0 24 24">
-               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-            </svg>
-          </div>
-          
-          <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 bg-indigo-600 rounded-lg shadow-md shadow-indigo-200">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
-                </svg>
-              </div>
-              <h2 className="text-xl font-bold text-slate-900 tracking-tight">AI Executive Insight</h2>
-            </div>
-            
-            <div className="bg-slate-50 rounded-xl p-6 border border-slate-100 min-h-[120px]">
-              {isInsightLoading ? (
-                <div className="flex flex-col items-center justify-center py-4 space-y-3">
-                  <div className="flex space-x-2">
-                    <div className="h-2 w-2 bg-indigo-600 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                    <div className="h-2 w-2 bg-indigo-600 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                    <div className="h-2 w-2 bg-indigo-600 rounded-full animate-bounce"></div>
-                  </div>
-                  <p className="text-sm text-indigo-600 font-medium animate-pulse italic">Thinking like a data scientist...</p>
-                </div>
-              ) : (
-                <div className="text-slate-700 leading-relaxed space-y-2 whitespace-pre-line font-medium">
-                  {aiInsight}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-      </main>
-    </div>
-  );
-};
+    except Exception as e:
+        st.error(f"Kesalahan dalam perhitungan KPI: {e}")
 
-export default App;
+    st.markdown("---")
+
+    # 5. Visualisasi
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        # Grafik Tren Bulanan (Bar Chart)
+        st.subheader("📈 Tren Penjualan Bulanan")
+        df_trend = df.set_index('order_date').resample('M')['order_amount'].sum().reset_index()
+        fig_trend = px.bar(
+            df_trend, 
+            x='order_date', 
+            y='order_amount',
+            labels={'order_amount': 'Total Penjualan', 'order_date': 'Bulan'},
+            color_discrete_sequence=['#3366CC']
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+    with col_right:
+        # Pie Chart Kategori Produk
+        st.subheader("🍕 Komposisi Kategori Produk")
+        df_pie = df.groupby('product_category')['order_amount'].sum().reset_index()
+        fig_pie = px.pie(
+            df_pie, 
+            values='order_amount', 
+            names='product_category',
+            hole=0.4,
+            color_discrete_sequence=px.colors.qualitative.Pastel
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    # Data Table Preview (Optional)
+    if st.checkbox("Lihat Detail Data Terfilter"):
+        st.dataframe(df.head(100), use_container_width=True)
+
+if __name__ == "__main__":
+    main()
