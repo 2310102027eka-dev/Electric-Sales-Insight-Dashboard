@@ -127,3 +127,176 @@ def main():
 
 if __name__ == "__main__":
     main()
+import os
+import pandas as pd
+import streamlit as st
+import plotly.express as px
+from supabase import create_client, Client
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+
+# --- 1. CONFIG & CONNECTION ---
+st.set_page_config(page_title="Product Return Clustering", layout="wide")
+
+@st.cache_resource
+def init_connection():
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        st.error("Kredensial Supabase tidak ditemukan!")
+        st.stop()
+    return create_client(url, key)
+
+supabase = init_connection()
+
+# --- 2. DATA FETCHING ---
+@st.cache_data(ttl=600)
+def load_raw_data():
+    try:
+        # Mengambil semua data dari tabel [datapenjualanbaru]
+        response = supabase.table("datapenjualanbaru").select("*").execute()
+        df = pd.DataFrame(response.data)
+        return df
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return pd.DataFrame()
+
+# --- 3. PRE-PROCESSING & AGGREGATION ---
+def preprocess_for_clustering(df):
+    if df.empty:
+        return pd.DataFrame()
+
+    # Konversi kolom numerik
+    numeric_cols = ['original_price', 'total_discount', 'order_amount']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    # Logika Return: Dianggap return jika cancel_reason atau return_type tidak kosong
+    # Pastikan kolom ada, jika tidak buat default False
+    col_reason = 'cancel_reason' if 'cancel_reason' in df.columns else None
+    col_type = 'return_type' if 'return_type' in df.columns else None
+    
+    df['is_return'] = False
+    if col_reason and col_type:
+        df['is_return'] = df[col_reason].notna() | (df[col_type].astype(str).str.strip() != "")
+    
+    # Agregasi PER PRODUK
+    # Kita asumsikan 'product_name' sebagai unique identifier
+    agg_df = df.groupby('product_name').agg(
+        total_transaksi=('order_id', 'count'),
+        total_return=('is_return', 'sum'),
+        avg_price=('original_price', 'mean'),
+        total_discount=('total_discount', 'sum')
+    ).reset_index()
+
+    # Hitung return_rate
+    agg_df['return_rate'] = agg_df['total_return'] / agg_df['total_transaksi']
+    
+    # Tangani missing value hasil agregasi (jika ada)
+    agg_df = agg_df.dropna()
+    
+    return agg_df
+
+# --- 4. CLUSTERING LOGIC ---
+def perform_clustering(df_agg):
+    # Fitur untuk clustering
+    features = ['return_rate', 'total_transaksi', 'avg_price', 'total_discount']
+    X = df_agg[features]
+
+    # Standarisasi Fitur
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # KMeans Modelling
+    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+    df_agg['cluster'] = kmeans.fit_predict(X_scaled)
+    
+    # Memberikan label nama cluster yang lebih bermakna secara otomatis
+    # (Opsional: Mengurutkan cluster berdasarkan return rate)
+    return df_agg, features
+
+# --- MAIN APP ---
+def main():
+    st.title("🧪 Product Analytics: Return Clustering")
+    st.markdown("Analisis Data Mining untuk mengidentifikasi produk yang menghambat rating toko.")
+
+    # 1. Load Data
+    df_raw = load_raw_data()
+    
+    if df_raw.empty:
+        st.warning("Data tidak ditemukan.")
+        return
+
+    # 2. Pre-processing
+    with st.spinner("Memproses data produk..."):
+        df_agg = preprocess_for_clustering(df_raw)
+
+    if len(df_agg) < 3:
+        st.error("Jumlah produk unik terlalu sedikit untuk melakukan clustering (minimal 3 produk).")
+        return
+
+    # 3. Clustering
+    df_clustered, features = perform_clustering(df_agg)
+
+    # 4. Visualisasi Scatter Plot
+    st.subheader("📍 Segmentasi Produk Berdasarkan Tingkat Return")
+    fig = px.scatter(
+        df_clustered,
+        x="total_transaksi",
+        y="return_rate",
+        color="cluster",
+        hover_name="product_name",
+        size="avg_price",
+        color_continuous_scale="Viridis",
+        labels={"return_rate": "Tingkat Return", "total_transaksi": "Total Transaksi"},
+        template="plotly_white"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 5. Interpretasi Hasil (Tabel Ringkasan)
+    st.subheader("📊 Profiling Cluster")
+    summary_table = df_clustered.groupby('cluster')[features].mean().reset_index()
+    
+    # Mempercantik tampilan tabel
+    st.dataframe(
+        summary_table.style.highlight_max(axis=0, subset=['return_rate'], color='#ffcccc')
+                           .highlight_min(axis=0, subset=['return_rate'], color='#ccffcc')
+                           .format({
+                               'return_rate': '{:.2%}',
+                               'total_transaksi': '{:.1f}',
+                               'avg_price': 'Rp{:,.0f}',
+                               'total_discount': 'Rp{:,.0f}'
+                           }),
+        use_container_width=True
+    )
+
+    # 6. Insight Bisnis Otomatis
+    st.subheader("💡 Insight Bisnis & Rekomendasi")
+    
+    # Mencari cluster dengan return rate tertinggi
+    idx_high_return = summary_table['return_rate'].idxmax()
+    idx_low_return_high_sales = summary_table.loc[
+        (summary_table['return_rate'] < summary_table['return_rate'].mean())
+    ]['total_transaksi'].idxmax()
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.error(f"**Cluster {idx_high_return}: Prioritas Perbaikan**")
+        st.write("Produk di cluster ini memiliki **tingkat return tertinggi**. Segera cek kualitas bahan, deskripsi produk, atau masalah logistik untuk mencegah penurunan rating.")
+
+    with col2:
+        st.success(f"**Cluster {idx_low_return_high_sales}: Produk Unggulan**")
+        st.write("Produk dengan **transaksi tinggi dan return rendah**. Sangat potensial untuk dipromosikan lebih lanjut guna menaikkan reputasi toko.")
+
+    with col3:
+        st.info("**Cluster Lain: Evaluasi Lanjutan**")
+        st.write("Produk dengan volume transaksi rendah. Perlu evaluasi apakah kurang peminat atau perlu penyesuaian harga (Average Price).")
+
+    # Data Detail
+    with st.expander("Lihat Data Produk Per Cluster"):
+        st.dataframe(df_clustered.sort_values(by='cluster'), use_container_width=True)
+
+if __name__ == "__main__":
+    main()
