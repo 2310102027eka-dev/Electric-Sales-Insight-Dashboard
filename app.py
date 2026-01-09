@@ -12,11 +12,11 @@ import numpy as np
 # --- 1. SETUP KONFIGURASI & API ---
 st.set_page_config(page_title="Dashboard Final Penjualan & AI Insights", layout="wide")
 
-# Mengambil API Key dari st.secrets (Lebih Aman)
+# Mengambil API Key dari secrets.toml (Lebih Aman)
 try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    GEMINI_API_KEY = secrets.toml["GEMINI_API_KEY"]
+    SUPABASE_URL = secrets.toml["SUPABASE_URL"]
+    SUPABASE_KEY = secrets.toml["SUPABASE_KEY"]
     
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-pro')
