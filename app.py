@@ -15,13 +15,13 @@ st.set_page_config(page_title="Dashboard Final Penjualan & AI Insights", layout=
 # Menggunakan st.secrets (objek resmi Streamlit untuk membaca secrets.toml)
 try:
     # Pastikan nama di dalam ["..."] sesuai dengan isi file secrets.toml Anda
-    # Jika di file Anda namanya GOOGLE_API_KEY, gunakan itu.
-    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"] 
+    # Jika di file Anda namanya GEMINI_API_KEY, gunakan itu.
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] 
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     
     # Konfigurasi AI Gemini
-    genai.configure(api_key=GOOGLE_API_KEY)
+    genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-pro')
     
 except Exception as e:
