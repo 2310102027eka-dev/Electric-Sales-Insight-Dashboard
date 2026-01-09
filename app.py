@@ -12,16 +12,16 @@ import numpy as np
 # --- 1. SETUP KONFIGURASI & API ---
 st.set_page_config(page_title="Dashboard Final Penjualan & AI Insights", layout="wide")
 
-# Cek apakah secrets terbaca sama sekali
-if not st.secrets:
+# Cek apakah secrets.toml terbaca sama sekali
+if not secrets.toml:
     st.error("Sistem tidak bisa menemukan file secrets sama sekali!")
     st.stop()
 
 try:
     # Coba ambil satu per satu
-    GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY")
-    SUPABASE_URL = st.secrets.get("SUPABASE_URL")
-    SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
+    GOOGLE_API_KEY = st.secrets.toml("GOOGLE_API_KEY")
+    SUPABASE_URL = st.secrets.toml("SUPABASE_URL")
+    SUPABASE_KEY = st.secrets.toml("SUPABASE_KEY")
     
     # Validasi jika ada yang kosong
     missing_keys = []
@@ -33,7 +33,7 @@ try:
         st.error(f"Kunci berikut tidak ditemukan di secrets: {', '.join(missing_keys)}")
         st.stop()
 
-    genai.configure(api_key=GEMINI_API_KEY)
+    genai.configure(api_key=GOOGLE_API_KEY)
     model = genai.GenerativeModel('gemini-pro')
     
 except Exception as e:
