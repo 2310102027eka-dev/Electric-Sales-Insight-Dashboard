@@ -95,8 +95,8 @@ else:
     if selected_cancel_reason:
         df_filtered = df_filtered[df_filtered['cancel_reason'].isin(selected_cancel_reason)]
         def perform_clustering(df):
-    if df.empty:
-        return None
+            if df.empty:
+                return None
 
     # 1. Agregasi Data per Produk (SKU)
     df_prod = df.groupby('platform_sku_variation').agg({
@@ -142,7 +142,7 @@ else:
     }
     
     df_prod['Cluster Name'] = df_prod['cluster_id'].map(mapping)
-    return df_prod
+        return df_prod
 
     # --- 4. MAIN DASHBOARD ---
     st.title("📊 Sales & Return Final Dashboard")
