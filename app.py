@@ -12,33 +12,23 @@ import numpy as np
 # --- 1. SETUP KONFIGURASI & API ---
 st.set_page_config(page_title="Dashboard Final Penjualan & AI Insights", layout="wide")
 
-# Cek apakah secrets.toml terbaca sama sekali
-if not secrets.toml:
-    st.error("Sistem tidak bisa menemukan file secrets sama sekali!")
-    st.stop()
-
+# Menggunakan st.secrets (objek resmi Streamlit untuk membaca secrets.toml)
 try:
-    # Coba ambil satu per satu
-    GOOGLE_API_KEY = st.secrets.toml("GOOGLE_API_KEY")
-    SUPABASE_URL = st.secrets.toml("SUPABASE_URL")
-    SUPABASE_KEY = st.secrets.toml("SUPABASE_KEY")
+    # Pastikan nama di dalam ["..."] sesuai dengan isi file secrets.toml Anda
+    # Jika di file Anda namanya GOOGLE_API_KEY, gunakan itu.
+    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"] 
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     
-    # Validasi jika ada yang kosong
-    missing_keys = []
-    if not GOOGLE_API_KEY: missing_keys.append("GOOGLE_API_KEY")
-    if not SUPABASE_URL: missing_keys.append("SUPABASE_URL")
-    if not SUPABASE_KEY: missing_keys.append("SUPABASE_KEY")
-    
-    if missing_keys:
-        st.error(f"Kunci berikut tidak ditemukan di secrets: {', '.join(missing_keys)}")
-        st.stop()
-
+    # Konfigurasi AI Gemini
     genai.configure(api_key=GOOGLE_API_KEY)
     model = genai.GenerativeModel('gemini-pro')
     
 except Exception as e:
-    st.error(f"Terjadi kesalahan teknis: {e}")
-    st.stop()
+    # Jika ada error (kunci tidak ketemu), tampilkan pesan ini
+    st.error(f"Waduh! Ada masalah pada konfigurasi Secrets: {e}")
+    st.info("Pastikan file .streamlit/secrets.toml sudah ada dan isinya benar.")
+    st.stop() # Berhenti di sini agar tidak error ke bawah
 
 # --- 2. DATA FETCHING ---
 @st.cache_data(ttl=600)
