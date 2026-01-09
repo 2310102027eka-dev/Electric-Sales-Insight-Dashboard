@@ -12,24 +12,33 @@ import numpy as np
 # --- 1. SETUP KONFIGURASI & API ---
 st.set_page_config(page_title="Dashboard Final Penjualan & AI Insights", layout="wide")
 
-# Mengambil API Key dari secrets.toml (Lebih Aman)
-try:
-    GEMINI_API_KEY = secrets.toml["GEMINI_API_KEY"]
-    SUPABASE_URL = secrets.toml["SUPABASE_URL"]
-    SUPABASE_KEY = secrets.toml["SUPABASE_KEY"]
-    
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
-except Exception as e:
-    st.error("Konfigurasi API Key atau Secrets tidak ditemukan. Pastikan file secrets.toml sudah benar.")
+# Cek apakah secrets terbaca sama sekali
+if not st.secrets:
+    st.error("Sistem tidak bisa menemukan file secrets sama sekali!")
     st.stop()
 
-# Setup Supabase
-@st.cache_resource
-def init_supabase():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+try:
+    # Coba ambil satu per satu
+    GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
+    SUPABASE_URL = st.secrets.get("SUPABASE_URL")
+    SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
+    
+    # Validasi jika ada yang kosong
+    missing_keys = []
+    if not GEMINI_API_KEY: missing_keys.append("GEMINI_API_KEY")
+    if not SUPABASE_URL: missing_keys.append("SUPABASE_URL")
+    if not SUPABASE_KEY: missing_keys.append("SUPABASE_KEY")
+    
+    if missing_keys:
+        st.error(f"Kunci berikut tidak ditemukan di secrets: {', '.join(missing_keys)}")
+        st.stop()
 
-supabase = init_supabase()
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-pro')
+    
+except Exception as e:
+    st.error(f"Terjadi kesalahan teknis: {e}")
+    st.stop()
 
 # --- 2. DATA FETCHING ---
 @st.cache_data(ttl=600)
