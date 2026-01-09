@@ -4,43 +4,60 @@ import streamlit as st
 import plotly.express as px
 import google.generativeai as genai
 from supabase import create_client, Client
-from datetime import datetime, timedelta
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-import numpy as np
+from datetime import datetime
 
 # --- 1. SETUP KONFIGURASI & API ---
 st.set_page_config(page_title="Dashboard Final Penjualan & AI Insights", layout="wide")
 
-# Menggunakan st.secrets (objek resmi Streamlit untuk membaca secrets.toml)
 try:
-    # Pastikan nama di dalam ["..."] sesuai dengan isi file secrets.toml Anda
-    # Jika di file Anda namanya GEMINI_API_KEY, gunakan itu.
+    # 1. Ambil kunci dari secrets
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] 
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     
-    # Konfigurasi AI Gemini
+    # 2. Setup Gemini AI
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-pro')
     
 except Exception as e:
-    # Jika ada error (kunci tidak ketemu), tampilkan pesan ini
-    st.error(f"Waduh! Ada masalah pada konfigurasi Secrets: {e}")
-    st.info("Pastikan file .streamlit/secrets.toml sudah ada dan isinya benar.")
-    st.stop() # Berhenti di sini agar tidak error ke bawah
+    st.error(f"Masalah Konfigurasi Secrets: {e}")
+    st.stop()
 
-# --- 2. DATA FETCHING ---
+# --- 2. SETUP SUPABASE ---
+@st.cache_resource
+def init_supabase():
+    # Fungsi ini membuat koneksi ke Supabase
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# PENTING: Baris di bawah ini harus ada agar variabel 'supabase' bisa dipakai di seluruh kode
+supabase = init_supabase()
+
+# --- 3. DATA FETCHING ---
 @st.cache_data(ttl=600)
 def load_data():
     try:
-        # Mengambil data dari tabel [datapenjualanbaru]
+        # Sekarang 'supabase' sudah didefinisikan di atas, jadi tidak akan error lagi
         res = supabase.table("datapenjualanbaru").select("*").execute()
         df = pd.DataFrame(res.data)
         
         if df.empty:
             return df
+            
+        # Konversi tanggal & angka (seperti kode sebelumnya)
+        if 'cancel_time' in df.columns:
+            df['cancel_time'] = pd.to_datetime(df['cancel_time'], errors='coerce')
+        
+        cols_to_fix = ['order_amount', 'total_refund', 'original_price', 'total_discount']
+        for col in cols_to_fix:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        
+        return df
+    except Exception as e:
+        st.error(f"Gagal memuat data dari Supabase: {e}")
+        return pd.DataFrame()
 
+# Lanjutkan ke bagian filter dan dashboard...
         # Konversi kolom tanggal
         if 'cancel_time' in df.columns:
             df['cancel_time'] = pd.to_datetime(df['cancel_time'], errors='coerce')
