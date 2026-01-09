@@ -152,25 +152,41 @@ else:
         if df_filtered.empty:
             st.warning("Data kosong, tidak ada yang bisa dianalisis.")
         else:
-            with st.spinner("Sedang menganalisis data Anda..."):
-                # Ringkasan data untuk AI
-                total_sales = df_filtered['order_amount'].sum()
-                total_refund = df_filtered['total_refund'].sum()
-                
-                prompt = f"""
-                Anda adalah konsultan bisnis. Analisis data berikut:
-                - Total Omset: Rp {total_sales:,.0f}
-                - Total Refund: Rp {total_refund:,.0f}
-                Berikan 3 saran strategi bisnis singkat.
-                """
-                
+            with st.spinner("Mengecek ketersediaan model dan menganalisis..."):
                 try:
-                    # Mencoba memanggil AI
-                    response = model.generate_content(prompt)
-                    st.markdown("### 💡 Hasil Analisis AI")
+                    # --- KODE DETEKTIF: Mencari model yang tersedia ---
+                    available_models = [m.name for m in genai.list_models() 
+                                       if 'generateContent' in m.supported_generation_methods]
+                    
+                    # Tampilkan di layar model apa saja yang ditemukan (untuk debug)
+                    # st.write("Model yang tersedia:", available_models) 
+
+                    if not available_models:
+                        st.error("Tidak ada model AI yang mendukung generateContent ditemukan untuk API Key ini.")
+                        st.stop()
+
+                    # Gunakan model pertama yang tersedia (biasanya yang paling stabil)
+                    # Kita prioritaskan gemini-1.5-flash jika ada di daftar
+                    selected_model_name = next((m for m in available_models if '1.5-flash' in m), available_models[0])
+                    
+                    # Inisialisasi model secara dinamis
+                    dynamic_model = genai.GenerativeModel(selected_model_name)
+                    
+                    # Ringkasan data
+                    total_sales = df_filtered['order_amount'].sum()
+                    total_refund = df_filtered['total_refund'].sum()
+                    
+                    prompt = f"""
+                    Anda adalah konsultan bisnis. Analisis data berikut:
+                    - Total Omset: Rp {total_sales:,.0f}
+                    - Total Refund: Rp {total_refund:,.0f}
+                    Berikan 3 saran strategi bisnis singkat berbasis prinsip kejujuran dan keadilan.
+                    """
+                    
+                    response = dynamic_model.generate_content(prompt)
+                    st.markdown(f"### 💡 Hasil Analisis AI (Model: {selected_model_name})")
                     st.write(response.text)
+                    
                 except Exception as e:
-                    # Menangkap error spesifik agar tidak muncul Traceback panjang
                     st.error("Gagal menghubungi AI.")
-                    st.info(f"Pesan Error: {e}")
-                    st.warning("Tips: Pastikan API Key Anda aktif di Google AI Studio dan Library google-generativeai sudah versi terbaru.")
+                    st.info(f"Pesan Error Detail: {e}")
