@@ -19,13 +19,13 @@ if not st.secrets:
 
 try:
     # Coba ambil satu per satu
-    GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
+    GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY")
     SUPABASE_URL = st.secrets.get("SUPABASE_URL")
     SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
     
     # Validasi jika ada yang kosong
     missing_keys = []
-    if not GEMINI_API_KEY: missing_keys.append("GEMINI_API_KEY")
+    if not GOOGLE_API_KEY: missing_keys.append("GOOGLE_API_KEY")
     if not SUPABASE_URL: missing_keys.append("SUPABASE_URL")
     if not SUPABASE_KEY: missing_keys.append("SUPABASE_KEY")
     
