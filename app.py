@@ -149,8 +149,28 @@ else:
     st.markdown("---")
     st.subheader("🤖 AI Business Advisor")
     if st.button("Minta Saran AI"):
-        with st.spinner("Menganalisis..."):
-            prompt = f"""Analisis data: Omset Rp {df_filtered['order_amount'].sum():,.0f}, 
-            Refund Rp {df_filtered['total_refund'].sum():,.0f}. Berikan 3 saran strategi bisnis Syariah."""
-            response = model.generate_content(prompt)
-            st.markdown(response.text)
+        if df_filtered.empty:
+            st.warning("Data kosong, tidak ada yang bisa dianalisis.")
+        else:
+            with st.spinner("Sedang menganalisis data Anda..."):
+                # Ringkasan data untuk AI
+                total_sales = df_filtered['order_amount'].sum()
+                total_refund = df_filtered['total_refund'].sum()
+                
+                prompt = f"""
+                Anda adalah konsultan bisnis. Analisis data berikut:
+                - Total Omset: Rp {total_sales:,.0f}
+                - Total Refund: Rp {total_refund:,.0f}
+                Berikan 3 saran strategi bisnis singkat.
+                """
+                
+                try:
+                    # Mencoba memanggil AI
+                    response = model.generate_content(prompt)
+                    st.markdown("### 💡 Hasil Analisis AI")
+                    st.write(response.text)
+                except Exception as e:
+                    # Menangkap error spesifik agar tidak muncul Traceback panjang
+                    st.error("Gagal menghubungi AI.")
+                    st.info(f"Pesan Error: {e}")
+                    st.warning("Tips: Pastikan API Key Anda aktif di Google AI Studio dan Library google-generativeai sudah versi terbaru.")
