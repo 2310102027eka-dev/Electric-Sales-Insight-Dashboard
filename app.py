@@ -17,7 +17,8 @@ try:
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
+    # Gunakan versi 1.5 flash yang lebih stabil
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
     st.error(f"Masalah Konfigurasi Secrets: {e}")
     st.stop()
