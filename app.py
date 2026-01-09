@@ -33,17 +33,17 @@ supabase = init_supabase()
 
 @st.cache_data(ttl=600)
 def load_data():
-    try:
-        res = supabase.table("datapenjualanbaru").select("*").execute()
-        df = pd.DataFrame(res.data)
-        if df.empty:
-            return df
-        if 'cancel_time' in df.columns:
-            df['cancel_time'] = pd.to_datetime(df['cancel_time'], errors='coerce')
-        cols_to_fix = ['order_amount', 'total_refund', 'original_price', 'total_discount']
-        for col in cols_to_fix:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+try:
+    res = supabase.table("datapenjualanbaru").select("*").execute()
+    df = pd.DataFrame(res.data)
+    if df.empty:
+        return df
+    if 'cancel_time' in df.columns:
+        df['cancel_time'] = pd.to_datetime(df['cancel_time'], errors='coerce')
+    cols_to_fix = ['order_amount', 'total_refund', 'original_price', 'total_discount']
+    for col in cols_to_fix:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
     except Exception as e:
         st.error(f"Gagal memuat data: {e}")
