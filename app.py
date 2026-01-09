@@ -11,19 +11,18 @@ from sklearn.preprocessing import StandardScaler
 # --- 1. SETUP KONFIGURASI & API ---
 st.set_page_config(page_title="Dashboard Final Penjualan & AI Insights", layout="wide")
 
+# PASTIKAN baris try di bawah ini rapat ke kiri (tidak ada spasi sama sekali di depannya)
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] 
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     
-   try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] 
     genai.configure(api_key=GEMINI_API_KEY)
-    
-    # Gunakan versi 1.5 flash yang lebih stabil
-    model = genai.GenerativeModel('gemini-1.5-flash') 
+    # Gunakan gemini-1.5-flash agar tidak error NotFound
+    model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
-    st.error(f"Gagal inisialisasi AI: {e}")
+    st.error(f"Masalah Konfigurasi Secrets: {e}")
+    st.stop()
 
 # --- 2. SETUP SUPABASE & DATA ---
 @st.cache_resource
