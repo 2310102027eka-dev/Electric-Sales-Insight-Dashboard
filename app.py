@@ -98,7 +98,7 @@ else:
             if df.empty:
                 return None
 
-    # 1. Agregasi Data per Produk (SKU)
+    # 1. Agregasi Data per Produk
     df_prod = df.groupby('platform_sku_variation').agg({
         'order_amount': 'sum',
         'total_refund': 'sum',
@@ -106,33 +106,23 @@ else:
     }).rename(columns={'platform_sku_variation': 'transaction_count'}).reset_index()
 
     # 2. Fitur untuk Clustering
-    # Kita gunakan: Jumlah Transaksi, Total Refund, dan Total Omset
     features = ['transaction_count', 'total_refund', 'order_amount']
     x = df_prod[features]
 
-    # 3. Normalisasi Data (Penting untuk K-Means)
+    # 3. Normalisasi Data
     scaler = StandardScaler()
     x_scaled = scaler.fit_transform(x)
 
-    # 4. Jalankan K-Means (K=3)
+    # 4. Jalankan K-Means
     kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
     df_prod['cluster_id'] = kmeans.fit_predict(x_scaled)
 
-    # 5. Mapping Cluster Berdasarkan Logika Bisnis Anda
-    # Kita hitung rata-rata tiap cluster untuk menentukan mana yang 'Unggulan', 'Bermasalah', atau 'Evaluasi'
+    # 5. Mapping Cluster
     cluster_means = df_prod.groupby('cluster_id')[features].mean()
     
-    # Logika Penentuan (Contoh sederhana berdasarkan urutan transaksi & refund)
-    # Cluster Unggulan: Transaksi Tinggi, Refund Rendah
-    # Cluster Bermasalah: Refund Tinggi
-    # Cluster Evaluasi: Transaksi Rendah
-    
-    # Mencari cluster dengan refund rata-rata tertinggi -> Bermasalah
     idx_bermasalah = cluster_means['total_refund'].idxmax()
-    # Mencari cluster dengan transaksi tertinggi (selain yang bermasalah) -> Unggulan
     remaining_indices = [i for i in range(3) if i != idx_bermasalah]
     idx_unggulan = cluster_means.loc[remaining_indices, 'transaction_count'].idxmax()
-    # Sisanya adalah Evaluasi
     idx_evaluasi = [i for i in range(3) if i not in [idx_bermasalah, idx_unggulan]][0]
 
     mapping = {
@@ -142,7 +132,7 @@ else:
     }
     
     df_prod['Cluster Name'] = df_prod['cluster_id'].map(mapping)
-        return df_prod
+    return df_prod # <--- Pastikan ini sejajar dengan df_prod['Cluster Name']
 
     # --- 4. MAIN DASHBOARD ---
     st.title("📊 Sales & Return Final Dashboard")
