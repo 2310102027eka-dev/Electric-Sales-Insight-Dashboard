@@ -16,12 +16,14 @@ try:
     SUPABASE_URL = st.secrets["SUPABASE_URL"]
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     
+   try:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] 
     genai.configure(api_key=GEMINI_API_KEY)
+    
     # Gunakan versi 1.5 flash yang lebih stabil
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash') 
 except Exception as e:
-    st.error(f"Masalah Konfigurasi Secrets: {e}")
-    st.stop()
+    st.error(f"Gagal inisialisasi AI: {e}")
 
 # --- 2. SETUP SUPABASE & DATA ---
 @st.cache_resource
