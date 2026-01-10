@@ -9,7 +9,13 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
 # --- 1. SETUP KONFIGURASI ---
-st.set_page_config(page_title="Sales Dashboard", layout="wide")
+st.set_page_config(page_title="Dashboard Penjualan Syariah", layout="wide")
+
+st.markdown("""
+    <style>
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #f0f2f6; }
+    </style>
+    """, unsafe_allow_html=True)
 
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] 
@@ -17,7 +23,7 @@ try:
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
-    st.error(f"Konfigurasi Secrets Masalah: {e}")
+    st.error(f"Konfigurasi Masalah: {e}")
     st.stop()
 
 # --- 2. LOAD DATA ---
@@ -30,8 +36,7 @@ def load_data():
         if df.empty: return df
         if 'cancel_time' in df.columns:
             df['cancel_time'] = pd.to_datetime(df['cancel_time'], errors='coerce')
-        cols_to_fix = ['order_amount', 'total_refund', 'original_price', 'total_discount']
-        for col in cols_to_fix:
+        for col in ['order_amount', 'total_refund', 'original_price', 'total_discount']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         return df
@@ -47,87 +52,76 @@ def perform_clustering(df):
         df_prod = df.groupby('platform_sku_variation').agg({
             'order_amount': 'sum', 'total_refund': 'sum', 'platform_sku_variation': 'count'
         }).rename(columns={'platform_sku_variation': 'transaction_count'}).reset_index()
-        features = ['transaction_count', 'total_refund', 'order_amount']
         scaler = StandardScaler()
-        x_scaled = scaler.fit_transform(df_prod[features])
+        x_scaled = scaler.fit_transform(df_prod[['transaction_count', 'total_refund', 'order_amount']])
         kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
         df_prod['cluster_id'] = kmeans.fit_predict(x_scaled)
         
-        cluster_means = df_prod.groupby('cluster_id')[features].mean()
-        idx_bermasalah = cluster_means['total_refund'].idxmax()
-        rem = [i for i in range(3) if i != idx_bermasalah]
-        idx_unggulan = cluster_means.loc[rem, 'transaction_count'].idxmax()
-        idx_evaluasi = [i for i in range(3) if i not in [idx_bermasalah, idx_unggulan]][0]
+        # Labeling Manual Berdasarkan Mean
+        c_means = df_prod.groupby('cluster_id').mean()
+        idx_bad = c_means['total_refund'].idxmax()
+        rem = [i for i in range(3) if i != idx_bad]
+        idx_good = c_means.loc[rem, 'transaction_count'].idxmax()
+        idx_eval = [i for i in range(3) if i not in [idx_bad, idx_good]][0]
         
-        mapping = {
-            idx_bermasalah: "🔴 Produk Bermasalah",
-            idx_unggulan: "🟢 Produk Unggulan",
-            idx_evaluasi: "🟡 Produk Evaluasi"
-        }
-        df_prod['Cluster Name'] = df_prod['cluster_id'].map(mapping)
+        map_clust = {idx_bad: "🔴 Cluster 0 (High Refund)", idx_good: "🟢 Cluster 1 (Top Sales)", idx_eval: "🟡 Cluster 2 (Evaluasi)"}
+        df_prod['Cluster Name'] = df_prod['cluster_id'].map(map_clust)
         return df_prod
-    except:
-        return None
+    except: return None
 
 # --- 4. DATA PROCESSING & SIDEBAR ---
 df_raw = load_data()
 if df_raw.empty:
-    st.warning("Data kosong di database.")
+    st.warning("Database kosong.")
     st.stop()
 
-# --- DETEKSI KOLOM OTOMATIS (UNTUK PERBAIKAN FILTER) ---
-# Mencari kolom yang mengandung kata 'city' atau 'kota'
-col_kota = next((c for c in df_raw.columns if 'city' in c.lower() or 'kota' in c.lower()), None)
-# Mencari kolom yang mengandung kata 'reason' atau 'alasan'
-col_alasan = next((c for c in df_raw.columns if 'reason' in c.lower() or 'alasan' in c.lower()), None)
+# --- DETEKSI KOLOM OTOMATIS (AGAR FILTER KOTA AKTIF) ---
+# Mencari kolom kota (cek city, kota, town, atau province)
+col_kota = next((c for c in df_raw.columns if any(x in c.lower() for x in ['city', 'kota', 'town'])), None)
+# Mencari kolom alasan refund
+col_alasan = next((c for c in df_raw.columns if any(x in c.lower() for x in ['reason', 'alasan'])), None)
 
 st.sidebar.header("🔍 Filter Dashboard")
 
-# A. Filter Tanggal
+# A. Tanggal
 with st.sidebar.expander("📅 Rentang Waktu", expanded=True):
-    min_date = df_raw['cancel_time'].min().date()
-    max_date = df_raw['cancel_time'].max().date()
-    start_date = st.date_input("Dari Tanggal", min_date)
-    end_date = st.date_input("Sampai Tanggal", max_date)
+    min_d, max_d = df_raw['cancel_time'].min().date(), df_raw['cancel_time'].max().date()
+    start_d = st.date_input("Mulai", min_d)
+    end_d = st.date_input("Selesai", max_d)
 
-# B. Filter Kota (DIPERBAIKI)
-with st.sidebar.expander("🏙️ Lokasi & Alasan", expanded=True):
+# B. Kota & Alasan (Sangat penting untuk filter)
+with st.sidebar.expander("🏙️ Lokasi & Alasan Refund", expanded=True):
     if col_kota:
-        list_kota = sorted(df_raw[col_kota].dropna().unique())
-        selected_cities = st.multiselect(f"Pilih Kota (Kolom: {col_kota})", list_kota)
+        sel_cities = st.multiselect(f"Pilih Kota", sorted(df_raw[col_kota].dropna().unique()))
     else:
-        st.error("Kolom 'Kota' tidak ditemukan di database!")
-        selected_cities = []
-
+        st.warning("Kolom Kota tidak terdeteksi.")
+        sel_cities = []
+        
     if col_alasan:
-        list_alasan = sorted(df_raw[col_alasan].dropna().unique())
-        selected_reasons = st.multiselect(f"Alasan Refund (Kolom: {col_alasan})", list_alasan)
+        sel_reasons = st.multiselect("Alasan Refund", sorted(df_raw[col_alasan].dropna().unique()))
     else:
-        st.warning("Kolom 'Alasan Refund' tidak ditemukan.")
-        selected_reasons = []
+        sel_reasons = []
 
-# C. Filter Kategori
+# C. Kategori
 with st.sidebar.expander("🏷️ Kategori"):
-    selected_cats = st.multiselect("Pilih Kategori", sorted(df_raw['product_category'].unique()))
+    sel_cats = st.multiselect("Pilih Kategori", sorted(df_raw['product_category'].unique()))
 
 # EKSEKUSI FILTER
 df_filtered = df_raw.copy()
-df_filtered = df_filtered[(df_filtered['cancel_time'].dt.date >= start_date) & (df_filtered['cancel_time'].dt.date <= end_date)]
-
-if col_kota and selected_cities:
-    df_filtered = df_filtered[df_filtered[col_kota].isin(selected_cities)]
-if col_alasan and selected_reasons:
-    df_filtered = df_filtered[df_filtered[col_alasan].isin(selected_reasons)]
-if selected_cats:
-    df_filtered = df_filtered[df_filtered['product_category'].isin(selected_cats)]
+df_filtered = df_filtered[(df_filtered['cancel_time'].dt.date >= start_d) & (df_filtered['cancel_time'].dt.date <= end_d)]
+if col_kota and sel_cities: df_filtered = df_filtered[df_filtered[col_kota].isin(sel_cities)]
+if col_alasan and sel_reasons: df_filtered = df_filtered[df_filtered[col_alasan].isin(sel_reasons)]
+if sel_cats: df_filtered = df_filtered[df_filtered['product_category'].isin(sel_cats)]
 
 # --- 5. TAMPILAN DASHBOARD ---
-st.title("📊 Sales Insight Dashboard")
+st.title("📊 Dashboard Analisis Penjualan & AI Syariah")
 
 # KPI - 3 KOLOM
 m1, m2, m3 = st.columns(3)
-m1.metric("Total Omset", f"Rp {df_filtered['order_amount'].sum():,.0f}")
-m2.metric("Total Refund", f"Rp {df_filtered['total_refund'].sum():,.0f}")
+t_sales = df_filtered['order_amount'].sum()
+t_refund = df_filtered['total_refund'].sum()
+m1.metric("Total Omset", f"Rp {t_sales:,.0f}")
+m2.metric("Total Refund", f"Rp {t_refund:,.0f}")
 m3.metric("Total Transaksi", f"{len(df_filtered):,}")
 
 st.markdown("---")
@@ -135,40 +129,66 @@ st.markdown("---")
 # Visualisasi
 c1, c2 = st.columns([6, 4])
 with c1:
-    st.subheader("📈 Tren Penjualan")
-    df_trend = df_filtered.set_index('cancel_time').resample('D')['order_amount'].sum().reset_index()
-    st.plotly_chart(px.line(df_trend, x='cancel_time', y='order_amount', markers=True), use_container_width=True)
+    st.subheader("📈 Tren Harian")
+    df_t = df_filtered.set_index('cancel_time').resample('D')['order_amount'].sum().reset_index()
+    st.plotly_chart(px.line(df_t, x='cancel_time', y='order_amount', markers=True), use_container_width=True)
 with c2:
     st.subheader("🍰 Kategori Produk")
     st.plotly_chart(px.pie(df_filtered, names='product_category', values='order_amount', hole=0.4), use_container_width=True)
 
 # Clustering & Tabel
 st.markdown("---")
-st.subheader("🎯 Analisis Cluster & Tabel Data")
-df_cluster = perform_clustering(df_filtered)
-if df_cluster is not None:
-    st.plotly_chart(px.scatter(df_cluster, x="transaction_count", y="total_refund", color="Cluster Name", size="order_amount"), use_container_width=True)
-    st.dataframe(df_cluster, use_container_width=True)
+st.subheader("🎯 Segmentasi Cluster Produk")
+df_c = perform_clustering(df_filtered)
+if df_c is not None:
+    st.plotly_chart(px.scatter(df_c, x="transaction_count", y="total_refund", color="Cluster Name", size="order_amount"), use_container_width=True)
+    st.subheader("📋 Tabel Detail Clustering")
+    st.dataframe(df_c, use_container_width=True)
 else:
     st.info("Data tidak cukup untuk clustering.")
 
-# AI Advisor (DENGAN FALLBACK JIKA 429)
+# --- 6. AI BUSINESS ADVISOR SYARIAH ---
 st.markdown("---")
-st.subheader("🤖 AI Business Advisor")
-if st.button("Minta Saran Strategi"):
-    # Hitung logika sederhana dulu (Fallback)
-    refund_rate = (df_filtered['total_refund'].sum() / df_filtered['order_amount'].sum() * 100) if df_filtered['order_amount'].sum() > 0 else 0
-    st.info(f"**Analisis Sistem:** Refund rate Anda saat ini adalah {refund_rate:.2f}%.")
+st.subheader("🤖 AI Consultant: Saran Bisnis Syariah")
+
+if st.button("Minta Analisis & Saran Syariah"):
+    # Fallback / Saran Manual jika AI Limit
+    refund_rate = (t_refund / t_sales * 100) if t_sales > 0 else 0
     
-    with st.spinner("Menghubungkan ke AI..."):
+    with st.spinner("Menghubungi AI Consultant..."):
         try:
             model = genai.GenerativeModel('gemini-1.5-flash')
-            prompt = f"Berikan 3 saran singkat untuk toko dengan omset Rp {df_filtered['order_amount'].sum()} dan refund rate {refund_rate:.2f}%."
-            response = model.generate_content(prompt)
-            st.success("Saran Strategi AI:")
-            st.write(response.text)
+            prompt = f"""
+            Anda adalah seorang Konsultan Bisnis Syariah yang ahli dalam Maqasid Syariah dan Muamalah.
+            Analisis data berikut:
+            - Omset: Rp {t_sales:,.0f}
+            - Total Refund: Rp {t_refund:,.0f}
+            - Refund Rate: {refund_rate:.2f}%
+            - Kategori Terlaris: {df_filtered['product_category'].mode()[0] if not df_filtered.empty else 'N/A'}
+            - Alasan Refund Utama: {df_filtered[col_alasan].mode()[0] if col_alasan and not df_filtered.empty else 'N/A'}
+
+            Berikan saran strategis yang mengandung unsur:
+            1. Nilai Amanah (Bagaimana menjaga kualitas agar pembeli tidak kecewa/refund).
+            2. Nilai Keadilan (Cara menangani refund agar tidak merugikan pembeli maupun penjual).
+            3. Nilai Keberkahan (Saran taktis agar bisnis berkembang secara halal dan berkah).
+            Berikan jawaban dalam poin-poin singkat dan menyejukkan.
+            """
+            res = model.generate_content(prompt)
+            st.success("Saran Strategi Bisnis Syariah:")
+            st.write(res.text)
+            
         except Exception as e:
             if "429" in str(e):
-                st.warning("⚠️ Kuota AI Gratis habis (Error 429). Silakan coba lagi beberapa saat lagi. Gunakan Analisis Sistem di atas untuk sementara.")
+                st.warning("⚠️ **Kuota AI Terlampaui (Error 429).** Berikut adalah Saran Syariah Otomatis untuk Anda:")
+                st.info(f"""
+                **Saran Syariah Berdasarkan Data:**
+                1. **Amanah:** Refund rate Anda {refund_rate:.1f}%. Jika tinggi, periksalah kesesuaian deskripsi produk dengan fisik barang agar tidak ada unsur *Gharar* (ketidakjelasan).
+                2. **Keadilan:** Pastikan proses pengembalian dana (refund) dilakukan dengan cepat dan jujur untuk menjaga ridho antara penjual dan pembeli.
+                3. **Barakah:** Sedekahkan sebagian dari omset Rp {t_sales:,.0f} Anda sebagai pembersih harta dan penarik keberkahan dalam perniagaan.
+                """)
             else:
-                st.error(f"Gagal terhubung ke AI: {e}")
+                st.error(f"Gagal terhubung: {e}")
+
+# Tambahan debug jika filter kota masih gagal (Hanya tampil di development)
+if st.checkbox("Lihat Nama Kolom Database (Debug Only)"):
+    st.write(df_raw.columns.tolist())
