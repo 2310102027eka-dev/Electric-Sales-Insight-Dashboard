@@ -9,7 +9,13 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 
 # --- 1. SETUP KONFIGURASI ---
-st.set_page_config(page_title="Dashboard Sales Syariah", layout="wide")
+st.set_page_config(page_title="Sales Dashboard Syariah", layout="wide")
+
+st.markdown("""
+    <style>
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid #f0f2f6; }
+    </style>
+    """, unsafe_allow_html=True)
 
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"] 
@@ -17,7 +23,7 @@ try:
     SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
 except Exception as e:
-    st.error(f"Konfigurasi Masalah: {e}")
+    st.error(f"Konfigurasi Secrets Bermasalah: {e}")
     st.stop()
 
 # --- 2. LOAD DATA ---
@@ -40,27 +46,27 @@ def load_data():
 
 # --- 3. CLUSTERING LOGIC ---
 def perform_clustering(df):
-    # Pastikan ada minimal 3 produk unik untuk dibuat 3 cluster
     if df.empty or df['platform_sku_variation'].nunique() < 3:
         return None
     try:
-        # Agregasi data per produk
+        # Agregasi per SKU - Menambahkan Kategori Produk ke dalam agregasi
         df_prod = df.groupby('platform_sku_variation').agg({
             'order_amount': 'sum', 
             'total_refund': 'sum', 
-            'platform_sku_variation': 'count'
+            'platform_sku_variation': 'count',
+            'product_category': 'first'  # Mengambil kategori pertama yang ditemukan untuk SKU tersebut
         }).rename(columns={'platform_sku_variation': 'transaction_count'}).reset_index()
         
-        # Standarisasi data
+        # Standarisasi
         features = ['transaction_count', 'total_refund', 'order_amount']
         scaler = StandardScaler()
         x_scaled = scaler.fit_transform(df_prod[features])
         
-        # K-Means
+        # KMeans
         kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
         df_prod['cluster_id'] = kmeans.fit_predict(x_scaled)
         
-        # Mapping nama cluster berdasarkan logika return
+        # Penamaan Cluster
         c_means = df_prod.groupby('cluster_id')[features].mean()
         idx_bad = c_means['total_refund'].idxmax()
         rem = [i for i in range(3) if i != idx_bad]
@@ -68,30 +74,32 @@ def perform_clustering(df):
         idx_eval = [i for i in range(3) if i not in [idx_bad, idx_good]][0]
         
         map_clust = {
-            idx_bad: "🔴 Cluster 0 (Refund Tinggi)", 
-            idx_good: "🟢 Cluster 1 (Produk Unggulan)", 
-            idx_eval: "🟡 Cluster 2 (Perlu Evaluasi)"
+            idx_bad: "🔴 Cluster 0 (High Refund)", 
+            idx_good: "🟢 Cluster 1 (Top Seller)", 
+            idx_eval: "🟡 Cluster 2 (Evaluasi)"
         }
         df_prod['Cluster Name'] = df_prod['cluster_id'].map(map_clust)
+        
+        # Mengatur urutan kolom tabel
+        df_prod = df_prod[['platform_sku_variation', 'product_category', 'transaction_count', 'order_amount', 'total_refund', 'Cluster Name']]
         return df_prod
-    except Exception as e:
-        st.write(f"Debug Cluster Error: {e}")
+    except:
         return None
 
 # --- 4. DATA PROCESSING & SIDEBAR ---
 df_raw = load_data()
 if df_raw.empty:
-    st.warning("Data tidak ditemukan.")
+    st.warning("Data kosong.")
     st.stop()
 
-# Deteksi Kolom Otomatis
-col_kota = next((c for c in df_raw.columns if any(x in c.lower() for x in ['city', 'kota', 'town', 'prov'])), None)
+# Deteksi Kolom (Kota & Alasan)
+col_kota = next((c for c in df_raw.columns if any(x in c.lower() for x in ['city', 'kota', 'town', 'prov', 'wilayah'])), None)
 col_alasan = next((c for c in df_raw.columns if any(x in c.lower() for x in ['reason', 'alasan'])), None)
 
 st.sidebar.header("🔍 Filter Dashboard")
 
-# A. Tanggal (Lengkap)
-with st.sidebar.expander("📅 Rentang Waktu", expanded=True):
+# A. Rentang Waktu
+with st.sidebar.expander("📅 Pilih Tanggal", expanded=True):
     min_d, max_d = df_raw['cancel_time'].min().date(), df_raw['cancel_time'].max().date()
     start_d = st.date_input("Mulai", min_d)
     end_d = st.date_input("Selesai", max_d)
@@ -99,15 +107,13 @@ with st.sidebar.expander("📅 Rentang Waktu", expanded=True):
 # B. Kota & Alasan
 with st.sidebar.expander("🏙️ Lokasi & Alasan", expanded=True):
     if col_kota:
-        list_kota = sorted(df_raw[col_kota].dropna().unique())
-        sel_cities = st.multiselect("Pilih Kota", list_kota)
+        sel_cities = st.multiselect("Pilih Kota", sorted(df_raw[col_kota].dropna().unique()))
     else:
-        st.error("Kolom 'Kota' tidak ditemukan di database.")
+        st.error("⚠️ Kolom Kota tidak ditemukan!")
         sel_cities = []
         
     if col_alasan:
-        list_alasan = sorted(df_raw[col_alasan].dropna().unique())
-        sel_reasons = st.multiselect("Alasan Refund", list_alasan)
+        sel_reasons = st.multiselect("Alasan Refund", sorted(df_raw[col_alasan].dropna().unique()))
     else:
         sel_reasons = []
 
@@ -123,7 +129,7 @@ if col_alasan and sel_reasons: df_filtered = df_filtered[df_filtered[col_alasan]
 if sel_cats: df_filtered = df_filtered[df_filtered['product_category'].isin(sel_cats)]
 
 # --- 5. TAMPILAN DASHBOARD ---
-st.title("📊 Dashboard Penjualan & Strategi Syariah")
+st.title("📊 Sales Insight & AI Advisor Syariah")
 
 # KPI - 3 KOLOM
 m1, m2, m3 = st.columns(3)
@@ -140,59 +146,56 @@ c1, c2 = st.columns([6, 4])
 with c1:
     st.subheader("📈 Tren Harian")
     df_t = df_filtered.set_index('cancel_time').resample('D')['order_amount'].sum().reset_index()
-    st.plotly_chart(px.line(df_t, x='cancel_time', y='order_amount', markers=True, template="plotly_white"), use_container_width=True)
+    st.plotly_chart(px.line(df_t, x='cancel_time', y='order_amount', markers=True), use_container_width=True)
 with c2:
     st.subheader("🍰 Kategori Produk")
     st.plotly_chart(px.pie(df_filtered, names='product_category', values='order_amount', hole=0.4), use_container_width=True)
 
-# --- CLUSTERING ---
+# Clustering
 st.markdown("---")
-st.subheader("🎯 Segmentasi Cluster Produk")
+st.subheader("🎯 Analisis Cluster Produk")
 df_c = perform_clustering(df_filtered)
 
 if df_c is not None:
-    fig_scat = px.scatter(df_c, x="transaction_count", y="total_refund", color="Cluster Name", size="order_amount", hover_name="platform_sku_variation")
-    st.plotly_chart(fig_scat, use_container_width=True)
-    st.subheader("📋 Tabel Detail Cluster")
+    st.plotly_chart(px.scatter(df_c, x="transaction_count", y="total_refund", color="Cluster Name", size="order_amount", hover_name="platform_sku_variation"), use_container_width=True)
+    st.subheader("📋 Tabel Detail Cluster (dengan Kategori)")
     st.dataframe(df_c, use_container_width=True)
 else:
-    st.info("💡 **Informasi Cluster**: Tidak muncul karena jumlah produk unik dalam filter kurang dari 3. Silakan perluas rentang tanggal atau pilih semua kota.")
+    st.info("💡 Data tidak cukup untuk clustering (Min. 3 produk unik).")
 
 # --- 6. AI BUSINESS ADVISOR SYARIAH ---
 st.markdown("---")
-st.subheader("🤖 AI Consultant: Saran Strategi Syariah")
+st.subheader("🤖 AI Consultant: Saran Bisnis Syariah")
 
 if st.button("Minta Analisis & Saran Syariah"):
     refund_rate = (t_refund / t_sales * 100) if t_sales > 0 else 0
-    with st.spinner("Menghubungi AI..."):
+    with st.spinner("Menghubungkan ke AI Syariah..."):
         try:
-            # SOLUSI ERROR 404: Mencoba model yang paling umum tersedia
-            model = genai.GenerativeModel('gemini-pro') # Menggunakan 'gemini-pro' sebagai alternatif stabil
-            
+            # Mencoba model yang tersedia
+            model = genai.GenerativeModel('gemini-1.5-flash')
             prompt = f"""
-            Anda adalah pakar Bisnis Syariah. Berikan analisis untuk data:
-            Omset: Rp {t_sales:,.0f}, Refund: Rp {t_refund:,.0f}, Rate: {refund_rate:.2f}%.
-            Berikan 3 saran strategi berdasarkan:
-            1. Amanah (Kualitas Produk)
-            2. Keadilan (Pelayanan Refund)
-            3. Keberkahan (Etika Bisnis)
-            Jawaban harus singkat dan islami.
+            Berikan analisis bisnis syariah singkat untuk:
+            Omset: Rp {t_sales:,.0f}, Refund: Rp {t_refund:,.0f}, Refund Rate: {refund_rate:.2f}%.
+            Berikan saran dalam 3 poin:
+            1. Amanah (Kualitas)
+            2. Keadilan (Pelayanan)
+            3. Barakah (Etika Bisnis)
+            Gunakan bahasa yang menyejukkan.
             """
             res = model.generate_content(prompt)
-            st.success("Analisis AI Berhasil:")
+            st.success("Saran AI Syariah:")
             st.write(res.text)
-            
         except Exception as e:
-            st.warning("⚠️ AI sedang tidak dapat dijangkau. Berikut adalah saran sistem otomatis:")
+            # Fallback jika Error 404 (model not found) atau 429 (quota)
+            st.warning("⚠️ AI sedang beristirahat. Ini saran sistem otomatis untuk Anda:")
             st.info(f"""
             **Saran Syariah Berdasarkan Data:**
-            - **Amanah**: Jaga kualitas barang agar sesuai deskripsi (menghindari Gharar).
-            - **Adil**: Segerakan proses refund senilai Rp {t_refund:,.0f} agar hak pembeli tertunaikan.
-            - **Barakah**: Berikan pelayanan terbaik demi keridhoan pembeli (Antaradin).
+            - **Amanah**: Perbaiki kualitas pada kategori terlaris agar terhindar dari ketidakjujuran (Gharar).
+            - **Adil**: Segerakan pengembalian hak pembeli senilai Rp {t_refund:,.0f} demi menjaga ridho antar pihak.
+            - **Barakah**: Niatkan perniagaan untuk ibadah agar setiap Rp {t_sales:,.0f} yang didapat bernilai pahala.
             """)
 
-# Debugging Kolom (Gunakan jika filter masih macet)
-if st.checkbox("Debug: Lihat Semua Kolom"):
-    st.write("Kolom terdeteksi:", df_raw.columns.tolist())
-    st.write(f"Kolom Kota terpilih: {col_kota}")
-    st.write(f"Kolom Alasan terpilih: {col_alasan}")
+# Debugger Nama Kolom (Klik jika filter Kota tidak jalan)
+if st.checkbox("Debug: Cek Kolom Database"):
+    st.write("Kolom yang ada:", df_raw.columns.tolist())
+    st.write(f"Kolom Kota yang terdeteksi: {col_kota}")
