@@ -129,7 +129,7 @@ if col_alasan and sel_reasons: df_filtered = df_filtered[df_filtered[col_alasan]
 if sel_cats: df_filtered = df_filtered[df_filtered['product_category'].isin(sel_cats)]
 
 # --- 5. TAMPILAN DASHBOARD ---
-st.title("📊 Penjualan dan Pengembalian Produk Listrik")
+st.title("📊 Analisis Penjualan dan Pengembalian Produk Listrik")
 
 # KPI - 3 KOLOM
 m1, m2, m3 = st.columns(3)
